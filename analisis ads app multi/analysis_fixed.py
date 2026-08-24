@@ -117,6 +117,11 @@ def load_and_clean(file_path, label=""):
     df['Tanggal_Mulai'] = pd.to_datetime(df['Tanggal_Mulai_str'], format='%d/%m/%y')
     df['Tanggal_Akhir'] = pd.to_datetime(df['Tanggal_Akhir_str'], format='%d/%m/%y')
 
+    # --- H+1 LOGIC ---
+    # Jika rentang tanggal berbeda hari, geser Tanggal Mulai ke H+1
+    mask_diff = df['Tanggal_Mulai'] < df['Tanggal_Akhir']
+    df.loc[mask_diff, 'Tanggal_Mulai'] = df.loc[mask_diff, 'Tanggal_Mulai'] + pd.Timedelta(days=1)
+
     # Bersihkan kolom mata uang
     df['Actual_Spend'] = df[col_spend].apply(clean_currency)
     df['Budget'] = df[col_budget].apply(clean_currency) if col_budget in df.columns else np.nan

@@ -172,14 +172,19 @@ function broadcastValues(rows) {
 function expandToDailyRows(rows) {
     const dailyRows = [];
     rows.forEach(r => {
+        let actualStartDate = new Date(r.date);
         let days = 1;
-        if (r.date && r.dateEnd) {
-            days = Math.round((r.dateEnd - r.date) / (1000 * 60 * 60 * 24)) + 1;
+        
+        // H+1 Logic: Jika ada rentang tanggal (beda hari), mulai sebar data di H+1
+        if (r.date && r.dateEnd && r.date.getTime() < r.dateEnd.getTime()) {
+            actualStartDate = new Date(r.date.getTime() + 24 * 60 * 60 * 1000); // Tambah 1 hari
+            days = Math.round((r.dateEnd - actualStartDate) / (1000 * 60 * 60 * 24)) + 1;
         }
+        
         if (days < 1) days = 1;
 
         for (let i = 0; i < days; i++) {
-            const newDate = new Date(r.date.getTime() + i * 24 * 60 * 60 * 1000);
+            const newDate = new Date(actualStartDate.getTime() + i * 24 * 60 * 60 * 1000);
             dailyRows.push({
                 ...r,
                 date: newDate,
