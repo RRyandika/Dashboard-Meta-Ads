@@ -108,6 +108,7 @@ function buildRows(headers, dataRows) {
             date: dateStart,
             dateEnd: dateEnd || dateStart,
             dateStr,
+            originalPeriodStr: dateStr,
             campaign: lastCampaign,
             location: lastLocation,
             region: lastRegion,
@@ -190,6 +191,7 @@ function expandToDailyRows(rows) {
                 date: newDate,
                 dateEnd: newDate,
                 dateStr: toLocalYYYYMMDD(newDate),
+                originalPeriodStr: r.originalPeriodStr,
                 actualSpend: r.actualSpend !== null ? r.actualSpend / days : null,
                 budget: r.budget !== null ? r.budget / days : null,
                 views: r.views !== null ? r.views / days : null,
@@ -225,6 +227,7 @@ function calculateMetrics(data, period = 'weekly') {
     const totalTTK = sumField(activeDataForTotals, 'ttk');
     const totalKG = sumField(activeDataForTotals, 'kg');
     const totalViews = sumField(activeDataForTotals, 'views');
+    const totalViewers = sumField(activeDataForTotals, 'viewers');
     const totalClicks = sumField(activeDataForTotals, 'linkClicks');
     const avgCostPerTTK = safeDiv(totalSpend, totalTTK) || 0;
     const avgCostPerKG = safeDiv(totalSpend, totalKG) || 0;
@@ -235,11 +238,12 @@ function calculateMetrics(data, period = 'weekly') {
     const locationData = aggregateByLocation(mainRows);
     const quadrant = analyzeQuadrant(locationData);
     const recommendations = generateRecommendations(locationData, avgCostPerTTK);
+    const liftInsights = analyzeLift(periodData);
 
     return {
-        totalSpend, totalTTK, totalKG, totalViews, totalClicks,
+        totalSpend, totalTTK, totalKG, totalViews, totalViewers, totalClicks,
         avgCostPerTTK, avgCostPerKG, ctr, cvr,
-        periodData, locationData, quadrant, recommendations,
+        periodData, locationData, quadrant, recommendations, liftInsights,
         trendSpend: calcTrend(periodData.map(p => p.totalSpend)),
         trendTTK: calcTrend(periodData.map(p => p.totalTTK)),
         trendKG: calcTrend(periodData.map(p => p.totalKG)),
@@ -280,6 +284,7 @@ function aggregateByPeriod(data, period) {
             const t = sumField(g.rows, 'ttk');
             const k = sumField(g.rows, 'kg');
             const v = sumField(g.rows, 'views');
+            const vw = sumField(g.rows, 'viewers');
             const c = sumField(g.rows, 'linkClicks');
             
             const locationBreakdown = {};
@@ -297,7 +302,7 @@ function aggregateByPeriod(data, period) {
                 label: periodLabel(g.key, period, g.rows),
                 key: g.key,
                 isActivePeriod,
-                totalSpend: s, totalTTK: t, totalKG: k, totalViews: v, totalClicks: c,
+                totalSpend: s, totalTTK: t, totalKG: k, totalViews: v, totalViewers: vw, totalClicks: c,
                 costPerTTK: isActivePeriod ? safeDiv(s, t) : null,
                 costPerKG: isActivePeriod ? safeDiv(s, k) : null,
                 ctr: isActivePeriod && safeDiv(c, v) != null ? safeDiv(c, v) * 100 : null,
@@ -356,6 +361,7 @@ function aggregateByLocation(data) {
         const t = sumField(rows, 'ttk');
         const k = sumField(rows, 'kg');
         const v = sumField(rows, 'views');
+        const vw = sumField(rows, 'viewers');
         const c = sumField(rows, 'linkClicks');
         // weekly trend for TTK
         const wk = {};
@@ -365,7 +371,7 @@ function aggregateByLocation(data) {
         });
         return {
             location: loc,
-            totalSpend: s, totalTTK: t, totalKG: k, totalViews: v, totalClicks: c,
+            totalSpend: s, totalTTK: t, totalKG: k, totalViews: v, totalViewers: vw, totalClicks: c,
             costPerTTK: safeDiv(s, t),
             costPerKG: safeDiv(s, k),
             ctr: safeDiv(c, v) != null ? safeDiv(c, v) * 100 : null,
@@ -406,6 +412,82 @@ function generateRecommendations(locationData, avgCost) {
         }
     });
     return recs;
+}
+
+function analyzeLift(periodData) {
+    const insights = [];
+    if (periodData.length < 2) return insights;
+
+    for (let i = 1; i < periodData.length; i++) {
+        const prev = periodData[i - 1];
+        const curr = periodData[i];
+
+        if (prev.isActivePeriod && !curr.isActivePeriod) {
+            const diffTTK = curr.totalTTK - prev.totalTTK;
+            const pctChange = prev.totalTTK > 0 ? (Math.abs(diffTTK) / prev.totalTTK * 100).toFixed(1) : (curr.totalTTK > 0 ? 100 : 0);
+            
+            const diffKG = curr.totalKG - prev.totalKG;
+            const kgWord = diffKG < 0 ? "turun" : (diffKG > 0 ? "naik" : "tetap");
+            
+            let text = "";
+            if (diffTTK < 0) {
+                text = `Mematikan ads menyebabkan **penurunan resi (TTK) sebesar ${pctChange}%** (dari ${formatNum(prev.totalTTK)} turun menjadi ${formatNum(curr.totalTTK)} resi, dan KG ${kgWord} dari ${formatNum(prev.totalKG)} menjadi ${formatNum(curr.totalKG)} kg).`;
+            } else if (diffTTK > 0) {
+                text = `Menariknya, meskipun ads dimatikan, resi (TTK) mengalami **kenaikan organik sebesar ${pctChange}%** (dari ${formatNum(prev.totalTTK)} naik menjadi ${formatNum(curr.totalTTK)} resi, dan KG ${kgWord} dari ${formatNum(prev.totalKG)} menjadi ${formatNum(curr.totalKG)} kg). Ini kemungkinan adalah efek *delay conversion* (orang klik kemarin, baru deal hari ini).`;
+            } else {
+                text = `Mematikan ads **tidak mengubah jumlah resi (TTK)** (tetap stabil di angka ${formatNum(curr.totalTTK)} resi, dengan KG ${kgWord} dari ${formatNum(prev.totalKG)} menjadi ${formatNum(curr.totalKG)} kg).`;
+            }
+            
+            // Look ahead for recovery
+            let recoveryFound = false;
+            for (let j = i + 1; j < periodData.length; j++) {
+                const next = periodData[j];
+                if (next.isActivePeriod) {
+                    const diffRec = next.totalTTK - curr.totalTTK;
+                    const pctRec = curr.totalTTK > 0 ? (Math.abs(diffRec) / curr.totalTTK * 100).toFixed(1) : (next.totalTTK > 0 ? 100 : 0);
+                    
+                    const diffRecKG = next.totalKG - curr.totalKG;
+                    const recKgWord = diffRecKG < 0 ? "turun" : (diffRecKG > 0 ? "naik" : "tetap");
+                    
+                    if (diffRec > 0) {
+                        text += ` Saat ads dinyalakan kembali pada periode ${next.label}, TTK meroket **naik sebesar ${pctRec}%** menjadi ${formatNum(next.totalTTK)} resi (volume KG ${recKgWord} menjadi ${formatNum(next.totalKG)} kg).`;
+                    } else if (diffRec < 0) {
+                        text += ` Saat ads dinyalakan kembali pada periode ${next.label}, TTK justru **turun sebesar ${pctRec}%** menjadi ${formatNum(next.totalTTK)} resi (volume KG ${recKgWord} menjadi ${formatNum(next.totalKG)} kg).`;
+                    } else {
+                        text += ` Saat ads dinyalakan kembali pada periode ${next.label}, jumlah resi tetap sama (volume KG ${recKgWord} menjadi ${formatNum(next.totalKG)} kg).`;
+                    }
+                    
+                    // Hitung durasi jeda
+                    const currDate = new Date(curr.key);
+                    const nextDate = new Date(next.key);
+                    const diffDays = Math.round((nextDate - currDate) / (1000 * 60 * 60 * 24));
+                    
+                    if (diffDays > 0) {
+                        if (diffDays > 7) {
+                            text += `<br><br><span style="color:var(--red);font-weight:600;">⚠️ Peringatan:</span> Jeda iklan ini memakan waktu <strong>${diffDays} hari</strong> (melebihi batas aman 7 hari). Algoritma pencarian audiens Meta kemungkinan besar sudah ter-reset dan harus belajar dari awal.`;
+                        } else {
+                            text += `<br><br><span style="color:var(--green);font-weight:600;">✅ Info:</span> Jeda iklan ini memakan waktu <strong>${diffDays} hari</strong> (masih dalam batas aman kurang dari 7 hari sehingga algoritma Meta tetap terjaga).`;
+                        }
+                    }
+                    
+                    recoveryFound = true;
+                    i = j - 1; // Skip ahead
+                    break;
+                }
+            }
+
+            if (!recoveryFound) {
+                text += ` (Belum ada data periode aktif setelahnya untuk mengukur performa lanjutan).`;
+            }
+
+            insights.push({
+                type: 'info',
+                title: `Dampak Jeda Iklan (Mulai ${curr.label})`,
+                text: text
+            });
+        }
+    }
+    return insights;
 }
 
 // ---- Helpers ----

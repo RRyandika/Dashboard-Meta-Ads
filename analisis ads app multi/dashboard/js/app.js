@@ -114,6 +114,7 @@ function onFilterChange() {
     renderAllCharts(metrics);
     renderDetailTable(metrics);
     renderRecommendations(metrics);
+    renderLiftInsights(metrics);
 }
 
 // ---- KPI Cards ----
@@ -235,6 +236,27 @@ function renderRecommendations(metrics) {
             <strong>${r.location}:</strong> ${r.text}
         </div>`;
     }).join('');
+}
+
+function renderLiftInsights(metrics) {
+    const el = document.getElementById('lift-insights');
+    if (!el) return;
+
+    if (!metrics.liftInsights || metrics.liftInsights.length === 0) {
+        el.innerHTML = '<div class="rec-card rec-neutral" style="margin-bottom: 1.5rem;"><span class="rec-icon">ℹ️</span> Belum ada data perbandingan jeda iklan (Ads OFF) yang dapat dianalisis.</div>';
+        return;
+    }
+
+    el.innerHTML = '<div style="margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem;">' + 
+    metrics.liftInsights.map(r => {
+        const formattedText = r.text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        return `<div class="rec-card rec-${r.type}">
+            <span class="rec-icon">💡</span>
+            <div>
+                <strong>${r.title}:</strong> ${formattedText}
+            </div>
+        </div>`;
+    }).join('') + '</div>';
 }
 
 

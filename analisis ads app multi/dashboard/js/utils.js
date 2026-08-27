@@ -195,17 +195,17 @@ function trendHTML(trend) {
     let tooltipText = "Kalkulasi Tren (Regresi Linear):\nTotal Perubahan = Kemiringan Tren × Jumlah Periode\nPersentase = (Total Perubahan ÷ Nilai Awal) × 100%\n\n*Catatan: Persentase bisa tampak ekstrem jika nilai awal sangat kecil.";
     
     if (trend && trend.n !== undefined && trend.direction !== 'Tidak cukup data') {
-        const fSlope = formatNum(trend.slope);
-        const fTotal = formatNum(trend.totalChange);
+        const fSlope = Number(trend.slope.toFixed(2)).toLocaleString('id-ID');
+        const fTotal = Number(trend.totalChange.toFixed(1)).toLocaleString('id-ID');
         const fFirst = formatNum(trend.firstVal);
         const pct = trend.pctChange.toFixed(1);
         
         tooltipText = `Kalkulasi Tren (Regresi Linear):\n` +
                       `1. Rata-rata perubahan (Kemiringan): ${fSlope}\n` +
                       `2. Jumlah Periode: ${trend.n}\n` +
-                      `3. Total Perubahan: ${fSlope} × ${trend.n} = ${fTotal}\n` +
+                      `3. Total Perubahan: ${fSlope} × ${trend.n} ≈ ${fTotal}\n` +
                       `4. Nilai Awal: ${fFirst}\n` +
-                      `5. Persentase: (${fTotal} ÷ ${fFirst}) × 100% = ${pct}%\n\n` +
+                      `5. Persentase: (${fTotal} ÷ ${fFirst}) × 100% ≈ ${pct}%\n\n` +
                       `*Catatan: Persentase bisa ekstrem jika nilai awal mendekati nol.`;
     }
 

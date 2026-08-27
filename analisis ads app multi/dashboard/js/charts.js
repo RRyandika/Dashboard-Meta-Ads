@@ -166,6 +166,94 @@ function renderKGPerPeriod(metrics) {
     });
 }
 
+// ---- 2b. Views Comparison (Line) ----
+function renderViewsComparison(metrics) {
+    const ctx = getOrCreateCanvas('chart-views-comparison');
+    if (!ctx || !metrics) return;
+    if (chartInstances['views-comparison']) chartInstances['views-comparison'].destroy();
+
+    const pd = metrics.periodData;
+
+    chartInstances['views-comparison'] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: pd.map(p => p.label),
+            datasets: [
+                {
+                    label: 'Views (Impresi)',
+                    data: pd.map(p => p.totalViews),
+                    borderColor: COLORS.blue,
+                    backgroundColor: COLORS.blue,
+                    fill: false,
+                    tension: 0,
+                    pointRadius: 4,
+                    pointHoverRadius: 7,
+                    borderWidth: 2,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Viewers (Reach)',
+                    data: pd.map(p => p.totalViewers),
+                    borderColor: COLORS.teal,
+                    backgroundColor: COLORS.teal,
+                    fill: false,
+                    tension: 0,
+                    pointRadius: 4,
+                    pointHoverRadius: 7,
+                    borderWidth: 2,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Link Clicks',
+                    data: pd.map(p => p.totalClicks),
+                    borderColor: COLORS.orange,
+                    backgroundColor: COLORS.orange,
+                    borderDash: [6, 4],
+                    fill: false,
+                    tension: 0,
+                    pointRadius: 5,
+                    pointHoverRadius: 8,
+                    borderWidth: 2,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: (c) => `${c.dataset.label}: ${formatNum(c.raw)}`
+                    }
+                },
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        boxWidth: 8
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    type: 'linear', position: 'left', grace: '10%',
+                    title: { display: true, text: 'Views / Viewers', color: '#475569', font: { weight: '600', size: 11 } },
+                    ticks: { callback: v => formatNum(v) },
+                    grid: { color: 'rgba(0,0,0,0.04)' }
+                },
+                y1: {
+                    type: 'linear', position: 'right', grace: '10%',
+                    title: { display: true, text: 'Link Clicks', color: COLORS.orange, font: { weight: '600', size: 11 } },
+                    ticks: { callback: v => formatNum(v), color: COLORS.orange },
+                    grid: { drawOnChartArea: false }
+                },
+                x: { grid: { display: false } }
+            }
+        }
+    });
+}
+
 // ---- 3. Cost per TTK per Location (Horizontal Bar) ----
 function renderCostPerTTKLocation(metrics) {
     const ctx = getOrCreateCanvas('chart-costttk-location');
@@ -464,13 +552,23 @@ function renderQuadrant(metrics) {
     const locs = metrics.locationData.filter(l => l.ctr != null && l.cvr != null && l.totalViews > 0);
     if (locs.length === 0) return;
 
-    const data = locs.map(l => ({
-        x: l.ctr,
-        y: l.cvr,
-        r: Math.max(5, Math.min(25, Math.sqrt(l.totalSpend / 500))),
-        label: l.location,
-        ttk: l.totalTTK,
-    }));
+    // Find max spend to normalize bubble sizes
+    const maxSpend = Math.max(...locs.map(l => l.totalSpend));
+
+    const data = locs.map(l => {
+        // Calculate relative size based on max spend. Radius range: 6 to 35
+        const spendRatio = maxSpend > 0 ? (l.totalSpend / maxSpend) : 0;
+        // Using square root so area scales linearly with spend
+        const radius = 6 + (Math.sqrt(spendRatio) * 29); 
+        
+        return {
+            x: l.ctr,
+            y: l.cvr,
+            r: radius,
+            label: l.location,
+            ttk: l.totalTTK,
+        };
+    });
 
     chartInstances['quadrant'] = new Chart(ctx, {
         type: 'bubble',
@@ -553,7 +651,7 @@ function renderTrendHealth(metrics) {
                     borderColor: COLORS.orange,
                     backgroundColor: hexAlpha(COLORS.orange, 0.1),
                     fill: true,
-                    tension: 0.3,
+                    tension: 0,
                     pointRadius: 5,
                     pointHoverRadius: 8,
                     yAxisID: 'y',
@@ -565,7 +663,7 @@ function renderTrendHealth(metrics) {
                     borderColor: COLORS.green,
                     backgroundColor: hexAlpha(COLORS.green, 0.1),
                     fill: true,
-                    tension: 0.3,
+                    tension: 0,
                     pointRadius: 5,
                     pointHoverRadius: 8,
                     yAxisID: 'y1',
@@ -681,6 +779,7 @@ function renderAllCharts(metrics) {
     if (!metrics) return;
     renderTTKPerPeriod(metrics);
     renderKGPerPeriod(metrics);
+    renderViewsComparison(metrics);
     renderCostPerTTKLocation(metrics);
     renderCostPerTTKPeriod(metrics);
     renderTTKPerLocation(metrics);
