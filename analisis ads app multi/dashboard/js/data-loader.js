@@ -92,8 +92,28 @@ function buildRows(headers, dataRows) {
         if (!/^\d{2}\/\d{2}\/\d{2}$/.test(startStr)) continue;
 
         const dateStart = parseDateDMY(startStr);
-        const dateEnd = parseDateDMY(endStr);
+        let dateEnd = parseDateDMY(endStr) || dateStart;
         if (!dateStart) continue;
+
+        // Auto-fix autofill year typos in Excel (e.g. 23/01/26 - 30/01/27, 26/06/26 - 29/06/27, 30/07/26 - 03/08/41)
+        if (dateEnd && dateStart) {
+            const startYear = dateStart.getFullYear();
+            const endYear = dateEnd.getFullYear();
+            if (endYear !== startYear) {
+                // If not a normal Dec -> Jan rollover
+                if (!(dateStart.getMonth() === 11 && dateEnd.getMonth() === 0)) {
+                    dateEnd.setFullYear(startYear);
+                    if (dateEnd < dateStart) {
+                        dateEnd.setFullYear(startYear + 1);
+                    }
+                }
+            }
+            // Check if duration exceeds 31 days for a single batch row
+            const diffDays = Math.round((dateEnd - dateStart) / (1000 * 60 * 60 * 24));
+            if (diffDays > 31) {
+                dateEnd.setFullYear(startYear);
+            }
+        }
 
         // Forward-fill
         const loc = cellStr(raw[col.location]);
@@ -106,7 +126,7 @@ function buildRows(headers, dataRows) {
 
         rows.push({
             date: dateStart,
-            dateEnd: dateEnd || dateStart,
+            dateEnd: dateEnd,
             dateStr,
             originalPeriodStr: dateStr,
             campaign: lastCampaign,
@@ -238,7 +258,8 @@ function calculateMetrics(data, period = 'weekly') {
     const locationData = aggregateByLocation(mainRows);
     const quadrant = analyzeQuadrant(locationData);
     const recommendations = generateRecommendations(locationData, avgCostPerTTK);
-    const liftInsights = analyzeLift(periodData);
+    const dailyPeriodData = period === 'daily' ? periodData : aggregateByPeriod(mainRows, 'daily');
+    const liftInsights = analyzeLift(dailyPeriodData, period);
 
     return {
         totalSpend, totalTTK, totalKG, totalViews, totalViewers, totalClicks,
@@ -308,6 +329,7 @@ function aggregateByPeriod(data, period) {
                 ctr: isActivePeriod && safeDiv(c, v) != null ? safeDiv(c, v) * 100 : null,
                 cvr: isActivePeriod && safeDiv(t, c) != null ? safeDiv(t, c) * 100 : null,
                 locationBreakdown: locationBreakdown,
+                rows: g.rows,
             };
         });
 }
@@ -414,28 +436,73 @@ function generateRecommendations(locationData, avgCost) {
     return recs;
 }
 
-function analyzeLift(periodData) {
+function analyzeLift(periodData, period = 'weekly') {
     const insights = [];
     if (periodData.length < 2) return insights;
+
+    const unit = 'resi/hari';
+    const kgUnit = 'kg/hari';
 
     for (let i = 1; i < periodData.length; i++) {
         const prev = periodData[i - 1];
         const curr = periodData[i];
 
         if (prev.isActivePeriod && !curr.isActivePeriod) {
-            const diffTTK = curr.totalTTK - prev.totalTTK;
-            const pctChange = prev.totalTTK > 0 ? (Math.abs(diffTTK) / prev.totalTTK * 100).toFixed(1) : (curr.totalTTK > 0 ? 100 : 0);
+            // === FILTER BERDASARKAN CAMPAIGN & WILAYAH YANG ADA DI KEDUA PERIODE (APPLE-TO-APPLE) ===
+            const adsOffCampaigns = [...new Set((curr.rows || []).map(r => r.campaign))];
+            const adsOffLocations = [...new Set((curr.rows || []).map(r => r.location))];
+
+            // Filter data periode Ads On sebelumnya agar hanya campaign & wilayah yang cocok
+            const prevFilteredRows = (prev.rows || []).filter(r => adsOffCampaigns.includes(r.campaign) && adsOffLocations.includes(r.location));
+            const prevCampaigns = [...new Set(prevFilteredRows.map(r => r.campaign))];
+            const prevLocations = [...new Set(prevFilteredRows.map(r => r.location))];
+
+            // Filter data Ads Off agar hanya wilayah yang juga ada di periode Ads On
+            const currFilteredRows = (curr.rows || []).filter(r => prevCampaigns.includes(r.campaign) && prevLocations.includes(r.location));
+
+            // Jika tidak ada campaign/wilayah yang cocok di periode sebelumnya
+            if (prevFilteredRows.length === 0 || currFilteredRows.length === 0) {
+                insights.push({
+                    type: 'warning',
+                    title: `Dampak Jeda Iklan (Mulai ${curr.label})`,
+                    text: `Tidak ada data dari campaign/wilayah <strong>${adsOffCampaigns.join(', ')}</strong> di periode Ads On sebelumnya (${prev.label}) untuk dibandingkan. Analisis Dampak Jeda Iklan tidak dapat dilakukan untuk transisi ini.`
+                });
+                continue;
+            }
+
+            // Hitung TTK/KG hanya dari campaign & wilayah yang cocok (murni apple-to-apple)
+            const prevTTK = sumField(prevFilteredRows, 'ttk');
+            const prevKG = sumField(prevFilteredRows, 'kg');
+            const currTTK = sumField(currFilteredRows, 'ttk');
+            const currKG = sumField(currFilteredRows, 'kg');
+
+            const diffTTK = currTTK - prevTTK;
+            const pctChange = prevTTK > 0 ? (Math.abs(diffTTK) / prevTTK * 100).toFixed(1) : (currTTK > 0 ? 100 : 0);
             
-            const diffKG = curr.totalKG - prev.totalKG;
+            const diffKG = currKG - prevKG;
             const kgWord = diffKG < 0 ? "turun" : (diffKG > 0 ? "naik" : "tetap");
+
+            const prevTTKRound = Math.round(prevTTK);
+            const currTTKRound = Math.round(currTTK);
+
+            // Info campaign yang dibandingkan (ditampilkan di akhir insight)
+            const campaignInfo = `<br><small style="opacity:0.8;">📋 Campaign yang dibandingkan: <strong>${prevCampaigns.join(', ')}</strong></small>`;
             
             let text = "";
             if (diffTTK < 0) {
-                text = `Mematikan ads menyebabkan **penurunan resi (TTK) sebesar ${pctChange}%** (dari ${formatNum(prev.totalTTK)} turun menjadi ${formatNum(curr.totalTTK)} resi, dan KG ${kgWord} dari ${formatNum(prev.totalKG)} menjadi ${formatNum(curr.totalKG)} kg).`;
+                if (prevTTKRound === currTTKRound) {
+                    text = `Mematikan ads membuat resi (TTK) **relatif stabil di kisaran ${formatNum(currTTK)} ${unit}** (turun tipis ${pctChange}%, dan KG ${kgWord} dari ${formatNum(prevKG)} menjadi ${formatNum(currKG)} ${kgUnit}).`;
+                } else {
+                    text = `Mematikan ads menyebabkan **penurunan resi (TTK) sebesar ${pctChange}%** (dari ${formatNum(prevTTK)} turun menjadi ${formatNum(currTTK)} ${unit}, dan KG ${kgWord} dari ${formatNum(prevKG)} menjadi ${formatNum(currKG)} ${kgUnit}).`;
+                }
             } else if (diffTTK > 0) {
-                text = `Menariknya, meskipun ads dimatikan, resi (TTK) mengalami **kenaikan organik sebesar ${pctChange}%** (dari ${formatNum(prev.totalTTK)} naik menjadi ${formatNum(curr.totalTTK)} resi, dan KG ${kgWord} dari ${formatNum(prev.totalKG)} menjadi ${formatNum(curr.totalKG)} kg). Ini kemungkinan adalah efek *delay conversion* (orang klik kemarin, baru deal hari ini).`;
+                if (prevTTKRound === currTTKRound) {
+                    text = `Menariknya, meskipun ads dimatikan, resi (TTK) **relatif stabil di kisaran ${formatNum(currTTK)} ${unit}** (naik tipis ${pctChange}%, dan KG ${kgWord} dari ${formatNum(prevKG)} menjadi ${formatNum(currKG)} ${kgUnit}).`;
+                } else {
+                    text = `Menariknya, meskipun ads dimatikan, resi (TTK) mengalami **kenaikan organik sebesar ${pctChange}%** (dari ${formatNum(prevTTK)} naik menjadi ${formatNum(currTTK)} ${unit}, dan KG ${kgWord} dari ${formatNum(prevKG)} menjadi ${formatNum(currKG)} ${kgUnit}). Ini kemungkinan adalah efek *delay conversion* (orang klik kemarin, baru deal hari ini).`;
+                }
             } else {
-                text = `Mematikan ads **tidak mengubah jumlah resi (TTK)** (tetap stabil di angka ${formatNum(curr.totalTTK)} resi, dengan KG ${kgWord} dari ${formatNum(prev.totalKG)} menjadi ${formatNum(curr.totalKG)} kg).`;
+                text = `Mematikan ads **tidak mengubah jumlah resi (TTK)** (tetap stabil di angka ${formatNum(currTTK)} ${unit}, dengan KG ${kgWord} dari ${formatNum(prevKG)} menjadi ${formatNum(currKG)} ${kgUnit}).`;
             }
             
             // Look ahead for recovery
@@ -443,23 +510,63 @@ function analyzeLift(periodData) {
             for (let j = i + 1; j < periodData.length; j++) {
                 const next = periodData[j];
                 if (next.isActivePeriod) {
-                    const diffRec = next.totalTTK - curr.totalTTK;
-                    const pctRec = curr.totalTTK > 0 ? (Math.abs(diffRec) / curr.totalTTK * 100).toFixed(1) : (next.totalTTK > 0 ? 100 : 0);
-                    
-                    const diffRecKG = next.totalKG - curr.totalKG;
+                    // Filter data recovery period juga berdasarkan campaign & wilayah yang sama
+                    const nextFilteredRows = (next.rows || []).filter(r => prevCampaigns.includes(r.campaign) && prevLocations.includes(r.location));
+
+                    // Jika tidak ada campaign yang cocok di recovery period
+                    if (nextFilteredRows.length === 0) {
+                        text += ` Saat ads dinyalakan kembali pada periode ${next.label}, tidak ditemukan data dari campaign <strong>${prevCampaigns.join(', ')}</strong> sehingga perbandingan recovery tidak dapat dilakukan.`;
+                        recoveryFound = true;
+                        i = j - 1;
+                        break;
+                    }
+
+                    const nextTTK = sumField(nextFilteredRows, 'ttk');
+                    const nextKG = sumField(nextFilteredRows, 'kg');
+
+                    const diffRec = nextTTK - currTTK;
+                    const nextTTKRound = Math.round(nextTTK);
+                    const diffRecKG = nextKG - currKG;
                     const recKgWord = diffRecKG < 0 ? "turun" : (diffRecKG > 0 ? "naik" : "tetap");
                     
-                    if (diffRec > 0) {
-                        text += ` Saat ads dinyalakan kembali pada periode ${next.label}, TTK meroket **naik sebesar ${pctRec}%** menjadi ${formatNum(next.totalTTK)} resi (volume KG ${recKgWord} menjadi ${formatNum(next.totalKG)} kg).`;
-                    } else if (diffRec < 0) {
-                        text += ` Saat ads dinyalakan kembali pada periode ${next.label}, TTK justru **turun sebesar ${pctRec}%** menjadi ${formatNum(next.totalTTK)} resi (volume KG ${recKgWord} menjadi ${formatNum(next.totalKG)} kg).`;
+                    // Cap percentage if currTTK is near zero to prevent extreme astronomical percentages
+                    let pctRec = "0.0";
+                    const isNearZeroBase = currTTK < 0.1 && nextTTK > 0;
+                    if (currTTK >= 0.1) {
+                        pctRec = (Math.abs(diffRec) / currTTK * 100).toFixed(1);
+                    }
+
+                    const pctRecNum = parseFloat(pctRec);
+                    let recActionWord = "naik";
+                    if (pctRecNum >= 50) {
+                        recActionWord = "meroket naik";
+                    } else if (pctRecNum >= 10) {
+                        recActionWord = "naik";
                     } else {
-                        text += ` Saat ads dinyalakan kembali pada periode ${next.label}, jumlah resi tetap sama (volume KG ${recKgWord} menjadi ${formatNum(next.totalKG)} kg).`;
+                        recActionWord = "naik tipis";
+                    }
+
+                    if (diffRec > 0) {
+                        if (isNearZeroBase) {
+                            text += ` Saat ads dinyalakan kembali pada periode ${next.label}, TTK kembali aktif menjadi **${formatNum(nextTTK)} ${unit}** (volume KG ${recKgWord} menjadi ${formatNum(nextKG)} ${kgUnit}).`;
+                        } else if (nextTTKRound === currTTKRound) {
+                            text += ` Saat ads dinyalakan kembali pada periode ${next.label}, TTK ${recActionWord} **sebesar ${pctRec}%** (tetap di kisaran ${formatNum(nextTTK)} ${unit}, volume KG ${recKgWord} menjadi ${formatNum(nextKG)} ${kgUnit}).`;
+                        } else {
+                            text += ` Saat ads dinyalakan kembali pada periode ${next.label}, TTK ${recActionWord} **sebesar ${pctRec}%** menjadi ${formatNum(nextTTK)} ${unit} (volume KG ${recKgWord} menjadi ${formatNum(nextKG)} ${kgUnit}).`;
+                        }
+                    } else if (diffRec < 0) {
+                        if (nextTTKRound === currTTKRound) {
+                            text += ` Saat ads dinyalakan kembali pada periode ${next.label}, TTK turun tipis **sebesar ${pctRec}%** (berkisar di ${formatNum(nextTTK)} ${unit}, volume KG ${recKgWord} menjadi ${formatNum(nextKG)} ${kgUnit}).`;
+                        } else {
+                            text += ` Saat ads dinyalakan kembali pada periode ${next.label}, TTK justru **turun sebesar ${pctRec}%** menjadi ${formatNum(nextTTK)} ${unit} (volume KG ${recKgWord} menjadi ${formatNum(nextKG)} ${kgUnit}).`;
+                        }
+                    } else {
+                        text += ` Saat ads dinyalakan kembali pada periode ${next.label}, jumlah resi tetap sama (tetap ${formatNum(nextTTK)} ${unit}, volume KG ${recKgWord} menjadi ${formatNum(nextKG)} ${kgUnit}).`;
                     }
                     
                     // Hitung durasi jeda
-                    const currDate = new Date(curr.key);
-                    const nextDate = new Date(next.key);
+                    const currDate = parseLocalYYYYMMDD(curr.key);
+                    const nextDate = parseLocalYYYYMMDD(next.key);
                     const diffDays = Math.round((nextDate - currDate) / (1000 * 60 * 60 * 24));
                     
                     if (diffDays > 0) {
@@ -480,6 +587,8 @@ function analyzeLift(periodData) {
                 text += ` (Belum ada data periode aktif setelahnya untuk mengukur performa lanjutan).`;
             }
 
+            text += campaignInfo;
+
             insights.push({
                 type: 'info',
                 title: `Dampak Jeda Iklan (Mulai ${curr.label})`,
@@ -499,7 +608,10 @@ function toLocalYYYYMMDD(date) {
 }
 
 function parseLocalYYYYMMDD(str) {
-    const [y, m, d] = str.split('-').map(Number);
+    const parts = str.split('-').map(Number);
+    const y = parts[0];
+    const m = parts[1] || 1;
+    const d = parts[2] || 1;
     return new Date(y, m - 1, d);
 }
 
