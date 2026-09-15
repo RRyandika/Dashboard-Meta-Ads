@@ -49,25 +49,47 @@ function renderTTKPerPeriod(metrics) {
     const minVal = Math.min(...dataVals);
     const diff = maxVal - minVal;
 
+    const spendVals = pd.map(p => p.totalSpend || 0);
+
     chartInstances['ttk-period'] = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: pd.map(p => p.label),
-            datasets: [{
-                label: 'Total TTK (Resi)',
-                data: dataVals,
-                backgroundColor: dataVals.map(v => getPaletteColor('blue', v, minVal, maxVal)),
-                borderColor: dataVals.map(v => getPaletteColor('blue', v, minVal, maxVal)),
-                borderWidth: 1,
-                borderRadius: 6,
-            }]
+            datasets: [
+                {
+                    label: 'Total TTK (Resi)',
+                    data: dataVals,
+                    backgroundColor: dataVals.map(v => getPaletteColor('blue', v, minVal, maxVal)),
+                    borderColor: dataVals.map(v => getPaletteColor('blue', v, minVal, maxVal)),
+                    borderWidth: 1,
+                    borderRadius: 6,
+                    yAxisID: 'y',
+                    order: 2,
+                },
+                {
+                    label: 'Total Spend',
+                    data: spendVals,
+                    type: 'line',
+                    borderColor: COLORS.purple,
+                    backgroundColor: hexAlpha(COLORS.purple, 0.2),
+                    borderWidth: 2.5,
+                    pointRadius: 4,
+                    pointHoverRadius: 7,
+                    fill: false,
+                    tension: 0.3,
+                    yAxisID: 'y1',
+                    order: 1,
+                }
+            ]
         },
         options: {
+            interaction: { mode: 'index', intersect: false },
             plugins: {
-                legend: { display: false },
+                legend: { display: true, position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
                 tooltip: {
                     callbacks: {
                         label: (c) => {
+                            if (c.datasetIndex === 1) return `Spend: ${formatRpFull(c.raw)}`;
                             const p = metrics.periodData[c.dataIndex];
                             if (!p.isActivePeriod && c.raw === 0) return 'Tidak pasang ads';
                             return `TTK: ${formatNum(c.raw)}`;
@@ -91,7 +113,8 @@ function renderTTKPerPeriod(metrics) {
                 datalabels: false,
             },
             scales: {
-                y: { beginAtZero: true, grace: '15%', ticks: { callback: v => formatNum(v) } },
+                y: { type: 'linear', position: 'left', beginAtZero: true, grace: '15%', ticks: { callback: v => formatNum(v) } },
+                y1: { type: 'linear', position: 'right', beginAtZero: true, grace: '15%', ticks: { callback: v => formatRp(v), color: COLORS.purple }, grid: { drawOnChartArea: false } },
                 x: { grid: { display: false } }
             }
         },
@@ -114,25 +137,47 @@ function renderKGPerPeriod(metrics) {
     const minVal = Math.min(...dataVals);
     const diff = maxVal - minVal;
 
+    const spendVals = pd.map(p => p.totalSpend || 0);
+
     chartInstances['kg-period'] = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: pd.map(p => p.label),
-            datasets: [{
-                label: 'Total KG',
-                data: dataVals,
-                backgroundColor: dataVals.map(v => getPaletteColor('orange', v, minVal, maxVal)),
-                borderColor: dataVals.map(v => getPaletteColor('orange', v, minVal, maxVal)),
-                borderWidth: 1,
-                borderRadius: 6,
-            }]
+            datasets: [
+                {
+                    label: 'Total KG',
+                    data: dataVals,
+                    backgroundColor: dataVals.map(v => getPaletteColor('orange', v, minVal, maxVal)),
+                    borderColor: dataVals.map(v => getPaletteColor('orange', v, minVal, maxVal)),
+                    borderWidth: 1,
+                    borderRadius: 6,
+                    yAxisID: 'y',
+                    order: 2,
+                },
+                {
+                    label: 'Total Spend',
+                    data: spendVals,
+                    type: 'line',
+                    borderColor: COLORS.purple,
+                    backgroundColor: hexAlpha(COLORS.purple, 0.2),
+                    borderWidth: 2.5,
+                    pointRadius: 4,
+                    pointHoverRadius: 7,
+                    fill: false,
+                    tension: 0.3,
+                    yAxisID: 'y1',
+                    order: 1,
+                }
+            ]
         },
         options: {
+            interaction: { mode: 'index', intersect: false },
             plugins: {
-                legend: { display: false },
+                legend: { display: true, position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
                 tooltip: {
                     callbacks: {
                         label: (c) => {
+                            if (c.datasetIndex === 1) return `Spend: ${formatRpFull(c.raw)}`;
                             const p = metrics.periodData[c.dataIndex];
                             if (!p.isActivePeriod && c.raw === 0) return 'Tidak pasang ads';
                             return `KG: ${formatNum(c.raw)}`;
@@ -155,7 +200,8 @@ function renderKGPerPeriod(metrics) {
                 },
             },
             scales: {
-                y: { beginAtZero: true, grace: '15%', ticks: { callback: v => formatNum(v) } },
+                y: { type: 'linear', position: 'left', beginAtZero: true, grace: '15%', ticks: { callback: v => formatNum(v) } },
+                y1: { type: 'linear', position: 'right', beginAtZero: true, grace: '15%', ticks: { callback: v => formatRp(v), color: COLORS.purple }, grid: { drawOnChartArea: false } },
                 x: { grid: { display: false } }
             }
         },
@@ -806,6 +852,7 @@ function dataLabelPlugin(color, formatter) {
         afterDatasetsDraw(chart) {
             const { ctx } = chart;
             chart.data.datasets.forEach((ds, di) => {
+                if (ds.type === 'line') return;
                 const meta = chart.getDatasetMeta(di);
                 meta.data.forEach((bar, i) => {
                     const val = ds.data[i];
