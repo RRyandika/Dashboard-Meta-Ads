@@ -301,15 +301,16 @@ function aggregateByPeriod(data, period) {
     return Object.values(groups)
         .sort((a, b) => a.date - b.date)
         .map(g => {
-            const s = sumField(g.rows, 'actualSpend');
-            const t = sumField(g.rows, 'ttk');
-            const k = sumField(g.rows, 'kg');
-            const v = sumField(g.rows, 'views');
-            const vw = sumField(g.rows, 'viewers');
-            const c = sumField(g.rows, 'linkClicks');
+            const activeRows = g.rows.filter(r => r.isActive);
+            const s = sumField(activeRows, 'actualSpend');
+            const t = sumField(activeRows, 'ttk');
+            const k = sumField(activeRows, 'kg');
+            const v = sumField(activeRows, 'views');
+            const vw = sumField(activeRows, 'viewers');
+            const c = sumField(activeRows, 'linkClicks');
             
             const locationBreakdown = {};
-            g.rows.forEach(r => {
+            activeRows.forEach(r => {
                 if (!locationBreakdown[r.location]) {
                     locationBreakdown[r.location] = { ttk: 0, kg: 0 };
                 }
@@ -374,7 +375,7 @@ function periodLabel(key, period, rows) {
 
 function aggregateByLocation(data) {
     const groups = {};
-    data.forEach(r => {
+    data.filter(r => r.isActive).forEach(r => {
         if (!groups[r.location]) groups[r.location] = [];
         groups[r.location].push(r);
     });
