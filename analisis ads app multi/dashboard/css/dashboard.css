@@ -493,6 +493,108 @@ body {
     white-space: nowrap;
 }
 
+.report-engagement {
+    margin-top: 12px;
+}
+
+.report-engagement h3 {
+    margin: 0 0 6px;
+    padding-bottom: 4px;
+    border-bottom: 2px solid #d6e0ed;
+    color: #2161c5;
+    font-size: 11px;
+    letter-spacing: 1px;
+}
+
+.report-engagement-wrap {
+    overflow-x: auto;
+}
+
+.report-engagement-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 9px;
+}
+
+.report-engagement-table th,
+.report-engagement-table td {
+    padding: 6px 5px;
+    border-bottom: 1px solid #edf1f6;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.report-engagement-table th {
+    background: #e8eff8;
+    color: #536780;
+    font-weight: 700;
+}
+
+.report-engagement-table th:first-child,
+.report-engagement-row.report-engagement-top td:first-child,
+.report-engagement-row.report-engagement-bottom td:first-child {
+    border-radius: 6px 0 0 6px;
+}
+
+.report-engagement-table th:last-child,
+.report-engagement-row.report-engagement-top td:last-child,
+.report-engagement-row.report-engagement-bottom td:last-child {
+    border-radius: 0 6px 6px 0;
+}
+
+.report-engagement-table th:first-child,
+.report-engagement-table td:first-child {
+    text-align: left;
+}
+
+.report-engagement-row.report-engagement-top td {
+    background: linear-gradient(to bottom, transparent 3px, #edf8ef 3px calc(100% - 3px), transparent calc(100% - 3px));
+}
+
+.report-engagement-row.report-engagement-bottom td {
+    background: linear-gradient(to bottom, transparent 3px, #fff0ef 3px calc(100% - 3px), transparent calc(100% - 3px));
+}
+
+.report-engagement-date {
+    display: block;
+    color: #647995;
+    font-size: 8px;
+    font-weight: 400;
+}
+
+.report-engagement-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 7px;
+    color: #536780;
+    font-size: 9px;
+}
+
+.report-engagement-legend > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.report-engagement-swatch {
+    width: 10px;
+    height: 10px;
+    border: 1px solid transparent;
+    border-radius: 2px;
+}
+
+.report-engagement-swatch-top {
+    border-color: #cce8d1;
+    background: #edf8ef;
+}
+
+.report-engagement-swatch-bottom {
+    border-color: #f0d0cd;
+    background: #fff0ef;
+}
+
 .report-bottom {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -600,6 +702,7 @@ body {
         grid-template-columns: minmax(75px, 1fr) minmax(60px, 1.2fr) minmax(65px, 0.8fr);
     }
     .report-chart-header > :last-child, .report-row > :last-child { display: none; }
+    .report-engagement-table { min-width: 560px; }
     .report-bottom { grid-template-columns: 1fr; gap: 8px; }
 }
 

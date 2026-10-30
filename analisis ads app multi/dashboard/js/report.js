@@ -160,7 +160,10 @@ function calculateReportMetrics(rows, dimension, options = {}) {
             ttk,
             kg: sum(groupRows, 'kg'),
             views: sum(groupRows, 'views'),
+            viewers: sum(groupRows, 'viewers'),
             clicks: sum(groupRows, 'linkClicks'),
+            ctr: sum(groupRows, 'views') > 0 ? sum(groupRows, 'linkClicks') / sum(groupRows, 'views') * 100 : null,
+            cvr: sum(groupRows, 'linkClicks') > 0 ? ttk / sum(groupRows, 'linkClicks') * 100 : null,
             costPerTTK: ttk > 0 ? spend / ttk : null,
         };
     }).sort((a, b) => {
@@ -199,7 +202,7 @@ function renderReport(type, title, period, metrics, previousMetrics) {
     return `
         <div class="report-heading">
             <div>
-                <div class="report-eyebrow">${monthly ? 'Monthly Report' : type === 'campaign' ? 'Content Report' : 'Campaign Report'}</div>
+                <div class="report-eyebrow">${monthly ? 'Monthly Report' : type === 'campaign' ? 'Ads Report' : 'Campaign Report'}</div>
                 <h1>${escapeReportHtml(heading)}</h1>
             </div>
             <div class="report-meta">${escapeReportHtml(period)}<br>Data ${formatReportNumber(metrics.items.length)} ${type === 'campaign' ? 'periode konten' : 'lokasi'}</div>
@@ -218,27 +221,68 @@ function renderReport(type, title, period, metrics, previousMetrics) {
             ${renderReportKpi('Total KG', formatReportNumber(metrics.totalKG), monthly ? monthlyDelta(metrics.totalKG, previousMetrics?.totalKG, 'volume') : `Biaya per KG ${formatReportCurrency(metrics.totalKG ? metrics.totalSpend / metrics.totalKG : null)}`)}
         </div>
         <div class="report-metrics-strip">
-            ${renderReportMetric(formatReportNumber(metrics.totalViews), 'Views')}
+            ${renderReportMetric(formatReportCount(metrics.totalViews), 'Views')}
             ${renderReportMetric(metrics.ctr == null ? '—' : formatReportPercent(metrics.ctr), 'CTR (Daya Tarik)')}
-            ${renderReportMetric(formatReportNumber(metrics.totalClicks), 'Link Clicks')}
+            ${renderReportMetric(formatReportCount(metrics.totalClicks), 'Link Clicks')}
             ${renderReportMetric(metrics.cvr == null ? '—' : formatReportPercent(metrics.cvr), 'CVR (Closing)')}
-            ${renderReportMetric(formatReportNumber(metrics.totalViewers), 'Viewers')}
+            ${renderReportMetric(formatReportCount(metrics.totalViewers), 'Viewers')}
         </div>
         <section class="report-chart">
             <h3>Biaya per TTK per ${escapeReportHtml(dimensionLabel)}: lebih rendah lebih baik</h3>
             <p class="report-chart-caption">${escapeReportHtml(benchmarkLabel)}</p>
             ${renderReportChart(metrics)}
         </section>
+        ${type === 'campaign' ? renderEngagementTable(metrics) : ''}
         <div class="report-bottom">
             <section>
                 <h3>RINGKASAN</h3>
                 ${summary.points.map(renderReportPoint).join('')}
             </section>
             <section class="report-actions">
-                <h3>YANG PERLU DILAKUKAN</h3>
+                <h3>REKOMENDASI</h3>
                 ${actions.map(renderReportPoint).join('')}
             </section>
         </div>`;
+}
+
+function renderEngagementTable(metrics) {
+    const rankedByCvr = metrics.items
+        .filter(item => item.cvr != null)
+        .slice()
+        .sort((a, b) => b.cvr - a.cvr || a.intervalIndex - b.intervalIndex);
+    const highlightCount = rankedByCvr.length >= 3
+        ? Math.max(1, Math.floor(rankedByCvr.length * 0.3))
+        : 0;
+    const topCount = highlightCount;
+    const bottomCount = highlightCount;
+    const topItems = new Set(rankedByCvr.slice(0, topCount));
+    const bottomItems = new Set(bottomCount ? rankedByCvr.slice(-bottomCount) : []);
+    const rows = metrics.items.map(item => {
+        const highlightClass = topItems.has(item) ? ' report-engagement-top' :
+            bottomItems.has(item) ? ' report-engagement-bottom' : '';
+        return `<tr class="report-engagement-row${highlightClass}">
+        <td><strong>${escapeReportHtml(item.label)}</strong><span class="report-engagement-date">${escapeReportHtml(item.dateLabel)}</span></td>
+        <td>${formatReportCount(item.views)}</td>
+        <td>${formatReportCount(item.viewers)}</td>
+        <td>${formatReportCount(item.clicks)}</td>
+        <td>${item.ctr == null ? '—' : formatReportPercent(item.ctr)}</td>
+        <td>${formatReportCount(item.ttk)}</td>
+        <td>${item.cvr == null ? '—' : formatReportPercent(item.cvr)}</td>
+    </tr>`;
+    }).join('');
+    const rankingLabels = [
+        topCount ? `<span><span class="report-engagement-swatch report-engagement-swatch-top" aria-hidden="true"></span>${topCount} CVR Tertinggi</span>` : '',
+        bottomCount ? `<span><span class="report-engagement-swatch report-engagement-swatch-bottom" aria-hidden="true"></span>${bottomCount} CVR Terendah</span>` : '',
+    ].filter(Boolean).join('');
+
+    return `<section class="report-engagement">
+        <h3>RINCIAN ENGAGEMENT PER KONTEN</h3>
+        <div class="report-engagement-wrap"><table class="report-engagement-table">
+            <thead><tr><th>Konten</th><th>Views</th><th>Viewers</th><th>Link Clicks</th><th>CTR</th><th>TTK</th><th>CVR</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>
+        ${rankingLabels ? `<div class="report-engagement-legend">${rankingLabels}</div>` : ''}
+    </section>`;
 }
 
 function renderReportKpi(label, value, note) {
@@ -371,6 +415,11 @@ function formatReportNumber(value) {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     }).format(Number(value)).replace(/,00$/, '');
+}
+
+function formatReportCount(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
+    return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Number(value));
 }
 
 function formatReportCurrency(value) {
