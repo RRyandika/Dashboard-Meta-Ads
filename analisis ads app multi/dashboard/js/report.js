@@ -20,7 +20,7 @@ function setupReportGenerator() {
 function updateReportTitleControl() {
     const titleInput = document.getElementById('report-custom-title');
     const type = document.getElementById('report-type')?.value;
-    if (titleInput) titleInput.hidden = type === 'monthly';
+    if (titleInput) titleInput.hidden = type === 'monthly' || type === 'impact';
 }
 
 function generateReport() {
@@ -32,14 +32,33 @@ function generateReport() {
     const type = document.getElementById('report-type')?.value || 'location';
     const titleInput = document.getElementById('report-custom-title');
     const customTitle = titleInput?.value.trim() || '';
-    if (type !== 'monthly' && !customTitle) {
+    if (type !== 'monthly' && type !== 'impact' && !customTitle) {
         alert('Masukkan judul report terlebih dahulu.');
         titleInput?.focus();
         return;
     }
-    if (titleInput) titleInput.hidden = type === 'monthly';
+    if (titleInput) titleInput.hidden = type === 'monthly' || type === 'impact';
 
     const selected = APP.filterState.selected;
+    if (type === 'impact') {
+        const rows = selectReportRows(APP.rawData, selected, null, null);
+        const impact = calculateAdsImpactReport(rows);
+        if (impact.error) {
+            alert(impact.error);
+            return;
+        }
+
+        const reportTitle = 'Analisis Dampak Ads';
+        const report = document.getElementById('report-page');
+        report.innerHTML = renderAdsImpactReport(reportTitle, impact);
+        document.getElementById('view-upload').style.display = 'none';
+        document.getElementById('view-dashboard').style.display = 'none';
+        document.getElementById('view-report').style.display = 'block';
+        document.title = `${reportTitle} | Meta Ads`;
+        window.scrollTo(0, 0);
+        return;
+    }
+
     let rows;
     let previousRows = [];
     let reportTitle;
@@ -105,6 +124,128 @@ function selectReportRows(data, selected, dateStart, dateEnd) {
         if (selected.locations.length && !selected.locations.includes(row.location)) return false;
         return true;
     });
+}
+
+function calculateAdsImpactReport(rows) {
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const weekKeyFor = row => startOfDay(getMonday(row.date)).getTime();
+    const shiftWeeks = (weekKey, count) => {
+        const shifted = new Date(weekKey);
+        shifted.setDate(shifted.getDate() + count * 7);
+        return startOfDay(shifted).getTime();
+    };
+    const activeWeekKeys = [...new Set(
+        rows.filter(row => row.isActive).map(weekKeyFor)
+    )].sort((a, b) => a - b);
+
+    if (!activeWeekKeys.length) {
+        return { error: 'Tidak ditemukan minggu dengan Actual Spend lebih dari 0 untuk filter yang dipilih.' };
+    }
+
+    const adStart = activeWeekKeys[0];
+    const adEnd = activeWeekKeys[activeWeekKeys.length - 1];
+    const comparisonWeeks = Math.round((adEnd - adStart) / weekMs) + 1;
+    const beforeStart = shiftWeeks(adStart, -comparisonWeeks);
+    const afterEnd = shiftWeeks(adStart, comparisonWeeks);
+    const observedWeekBounds = rows.reduce((bounds, row) => {
+        const weekKey = weekKeyFor(row);
+        return {
+            min: Math.min(bounds.min, weekKey),
+            max: Math.max(bounds.max, weekKey),
+        };
+    }, { min: Infinity, max: -Infinity });
+
+    if (observedWeekBounds.min > beforeStart ||
+        observedWeekBounds.max < shiftWeeks(afterEnd, -1)) {
+        return {
+            error: `Data harus mencakup ${comparisonWeeks} minggu sebelum dan ${comparisonWeeks} minggu mulai dari awal iklan.`,
+        };
+    }
+
+    const weeklyTotals = new Map();
+    const locationTotalsByName = new Map();
+    rows.forEach(row => {
+        const weekKey = weekKeyFor(row);
+        if (weekKey < beforeStart || weekKey >= afterEnd) return;
+
+        if (!weeklyTotals.has(weekKey)) {
+            weeklyTotals.set(weekKey, { spend: 0, ttk: 0, kg: 0 });
+        }
+        const totals = weeklyTotals.get(weekKey);
+        totals.spend += Number(row.actualSpend) || 0;
+        totals.ttk += Number(row.ttk) || 0;
+        totals.kg += Number(row.kg) || 0;
+
+        const location = row.location || 'Tidak diketahui';
+        if (!locationTotalsByName.has(location)) {
+            locationTotalsByName.set(location, {
+                beforeTTK: 0,
+                beforeKG: 0,
+                afterTTK: 0,
+                afterKG: 0,
+            });
+        }
+        const locationTotals = locationTotalsByName.get(location);
+        const period = weekKey < adStart ? 'before' : 'after';
+        locationTotals[`${period}TTK`] += Number(row.ttk) || 0;
+        locationTotals[`${period}KG`] += Number(row.kg) || 0;
+    });
+
+    const getWeekTotals = weekKey => weeklyTotals.get(weekKey) || { spend: 0, ttk: 0, kg: 0 };
+    const beforeWeeks = [];
+    const afterWeeks = [];
+    for (let index = 0; index < comparisonWeeks; index++) {
+        const beforeKey = shiftWeeks(beforeStart, index);
+        const afterKey = shiftWeeks(adStart, index);
+        beforeWeeks.push({ weekStart: new Date(beforeKey), ...getWeekTotals(beforeKey) });
+        afterWeeks.push({ weekStart: new Date(afterKey), ...getWeekTotals(afterKey) });
+    }
+
+    const beforeEnd = new Date(adStart - 1);
+    const afterLastDay = new Date(afterEnd);
+    afterLastDay.setDate(afterLastDay.getDate() - 1);
+    afterLastDay.setHours(23, 59, 59, 999);
+    const locationTotals = [...locationTotalsByName].map(([location, totals]) => {
+        const { beforeTTK, beforeKG, afterTTK, afterKG } = totals;
+        const ttkChange = percentChange(afterTTK, beforeTTK);
+        const kgChange = percentChange(afterKG, beforeKG);
+
+        return {
+            location,
+            beforeTTK,
+            beforeKG,
+            afterTTK,
+            afterKG,
+            ttkChange,
+            kgChange,
+            improved: ttkChange !== null && ttkChange > 0 ? 1 : 0,
+        };
+    }).sort((a, b) => b.improved - a.improved || b.afterTTK - a.afterTTK || a.location.localeCompare(b.location));
+
+    const beforeTTK = beforeWeeks.reduce((total, week) => total + week.ttk, 0);
+    const beforeKG = beforeWeeks.reduce((total, week) => total + week.kg, 0);
+    const afterTTK = afterWeeks.reduce((total, week) => total + week.ttk, 0);
+    const afterKG = afterWeeks.reduce((total, week) => total + week.kg, 0);
+    const totalSpend = afterWeeks.reduce((total, week) => total + week.spend, 0);
+
+    return {
+        comparisonWeeks,
+        beforeStart: new Date(beforeStart),
+        beforeEnd,
+        adStart: new Date(adStart),
+        afterLastDay,
+        beforeWeeks,
+        afterWeeks,
+        locations: locationTotals,
+        improvedLocations: locationTotals.reduce((total, item) => total + item.improved, 0),
+        beforeTTK,
+        beforeKG,
+        afterTTK,
+        afterKG,
+        totalSpend,
+        ttkChange: percentChange(afterTTK, beforeTTK),
+        kgChange: percentChange(afterKG, beforeKG),
+    };
 }
 
 function calculateReportMetrics(rows, dimension, options = {}) {
@@ -189,6 +330,215 @@ function calculateReportMetrics(rows, dimension, options = {}) {
     };
 }
 
+function renderAdsImpactReport(title, impact) {
+    const ttkChange = formatImpactChange(impact.ttkChange);
+    const kgChange = formatImpactChange(impact.kgChange);
+    const headline = impact.improvedLocations > impact.locations.length / 2
+        ? 'Performa TTK Meningkat Setelah Pemasangan Ads'
+        : impact.improvedLocations > 0
+            ? 'Performa TTK Meningkat di Sejumlah Lokasi'
+            : 'Performa TTK Belum Meningkat Setelah Pemasangan Ads';
+    const description = `${impact.improvedLocations} dari ${impact.locations.length} lokasi mengalami pertumbuhan TTK, dengan perubahan total sebesar ${ttkChange} dan KG sebesar ${kgChange}.`;
+    const costPerTTK = impact.afterTTK > 0 ? impact.totalSpend / impact.afterTTK : null;
+    const spendPerWeek = impact.totalSpend / Math.max(1, impact.comparisonWeeks);
+    const periodStart = impact.beforeStart;
+    const periodEnd = impact.afterLastDay;
+    const insights = buildImpactInsights(impact);
+
+    return `
+        <div class="report-heading">
+            <div>
+                <div class="report-eyebrow">Campaign Report</div>
+                <h1>${escapeReportHtml(title)}</h1>
+            </div>
+            <div class="report-meta">Complete · hasil ${formatReportDate(periodStart)} – ${formatReportDate(periodEnd)}<br>Data ${impact.comparisonWeeks * 2} minggu</div>
+        </div>
+        <section class="report-highlight">
+            <span class="report-highlight-badge">COMPLETE</span>
+            <div>
+                <h2>${escapeReportHtml(headline)}</h2>
+                <p>${escapeReportHtml(description)}</p>
+            </div>
+        </section>
+        <div class="report-kpis">
+            ${renderReportKpi('Total Pengeluaran', formatReportCurrency(impact.totalSpend), `${formatReportCurrency(spendPerWeek)} per minggu`)}
+            ${renderReportKpi('Jumlah Periode Ads', `${impact.comparisonWeeks}`, 'Minggu')}
+            ${renderReportKpi('Lokasi Meningkat', `${impact.improvedLocations}/${impact.locations.length}`, 'Lokasi dengan kenaikan TTK')}
+            ${renderReportKpi('Biaya per TTK', formatReportCurrency(costPerTTK), '')}
+        </div>
+        <div class="report-metrics-strip report-impact-strip">
+            ${renderImpactMetric(formatReportCount(impact.beforeTTK), 'TTK Sebelum Ads')}
+            ${renderImpactMetric(formatReportCount(impact.beforeKG), 'KG Sebelum Ads', true)}
+            ${renderImpactMetric(formatReportCount(impact.afterTTK), 'TTK Setelah Ads')}
+            ${renderImpactMetric(formatReportCount(impact.afterKG), 'KG Setelah Ads', true)}
+            ${renderImpactMetric(ttkChange, 'Pertumbuhan TTK')}
+        </div>
+        <section class="report-impact-trend">
+            <h3>Perbandingan Sebelum dan Setelah Memasang Ads</h3>
+            <p>Tren TTK selama ${impact.comparisonWeeks} minggu sebelum dan ${impact.comparisonWeeks} minggu setelah pemasangan ads.</p>
+            ${renderImpactTrendChart(impact)}
+        </section>
+        <section class="report-impact-growth">
+            <h3>Pertumbuhan TTK</h3>
+            <div>${getImpactGrowthHighlights(impact.locations).map(item => {
+                const tone = item.ttkChange === null ? 'unknown' : item.ttkChange > 0 ? 'positive' : 'negative';
+                return `<span class="report-impact-growth-item report-impact-growth-${tone}">${escapeReportHtml(item.location)} ${item.ttkChange === null ? 'N/A' : formatImpactChange(item.ttkChange)}</span>`;
+            }).join('')}</div>
+        </section>
+        <section class="report-bottom report-impact-bottom">
+            <section>
+                <h3>RINGKASAN</h3>
+                ${insights.summary.map(renderReportPoint).join('')}
+            </section>
+            <section class="report-actions">
+                <h3>REKOMENDASI</h3>
+                ${insights.recommendations.map(renderReportPoint).join('')}
+            </section>
+        </section>
+        <div class="report-impact-footer-rule" aria-hidden="true"></div>`;
+}
+
+function getImpactGrowthHighlights(locations) {
+    const top = locations
+        .filter(item => item.ttkChange !== null && item.ttkChange > 0)
+        .sort((a, b) => b.ttkChange - a.ttkChange)
+        .slice(0, 3);
+    const bottom = locations
+        .filter(item => item.ttkChange !== null && item.ttkChange < 0)
+        .sort((a, b) => a.ttkChange - b.ttkChange)
+        .slice(0, 3);
+    return [...top, ...bottom];
+}
+
+function renderImpactMetric(value, label, highlighted = false) {
+    return `<div class="${highlighted ? 'report-impact-metric-highlight' : ''}">
+        <div class="report-metric-value">${escapeReportHtml(value)}</div>
+        <div class="report-metric-label">${escapeReportHtml(label)}</div>
+    </div>`;
+}
+
+function renderImpactTrendChart(impact) {
+    const allWeeks = [...impact.beforeWeeks, ...impact.afterWeeks];
+    if (!allWeeks.length) return '<div class="report-empty">Tidak ada data mingguan untuk ditampilkan.</div>';
+
+    const width = 660;
+    const height = 300;
+    const left = 42;
+    const right = 12;
+    const top = 20;
+    const bottom = 55;
+    const plotWidth = width - left - right;
+    const plotHeight = height - top - bottom;
+    const maximum = Math.max(0, ...allWeeks.map(week => week.ttk));
+    const magnitude = Math.pow(10, Math.floor(Math.log10(maximum || 1)));
+    const yMaximum = Math.max(magnitude, Math.ceil(maximum / magnitude) * magnitude);
+    const xFor = index => left + (allWeeks.length === 1 ? plotWidth / 2 : index * plotWidth / (allWeeks.length - 1));
+    const yFor = value => top + plotHeight - (value / yMaximum) * plotHeight;
+    const makePath = (weeks, offset) => weeks.map((week, index) =>
+        `${index === 0 ? 'M' : 'L'} ${xFor(offset + index).toFixed(1)} ${yFor(week.ttk).toFixed(1)}`
+    ).join(' ');
+    const grid = Array.from({ length: 5 }, (_, index) => {
+        const value = yMaximum * index / 4;
+        const y = yFor(value);
+        return `<g class="report-impact-grid">
+            <line x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}"></line>
+            <text x="${left - 7}" y="${(y + 3).toFixed(1)}" text-anchor="end">${formatReportCount(value)}</text>
+        </g>`;
+    }).join('');
+    const showEvery = Math.max(1, Math.ceil(allWeeks.length / 30));
+    const labels = allWeeks.map((week, index) => {
+        if (index % showEvery !== 0 && index !== allWeeks.length - 1) return '';
+        const labelX = xFor(index) - 4;
+        const labelY = top + plotHeight + 12;
+        return `<text class="report-impact-week-label" x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="start" transform="rotate(45 ${labelX.toFixed(1)} ${labelY.toFixed(1)})">Week ${index + 1}</text>`;
+    }).join('');
+    const points = allWeeks.map((week, index) => {
+        if (allWeeks.length > 32 && index % Math.ceil(allWeeks.length / 32) !== 0) return '';
+        const x = xFor(index);
+        const y = yFor(week.ttk);
+        const labelY = Math.max(top + 10, y - 8);
+        const anchor = index === 0 ? 'start' : index === allWeeks.length - 1 ? 'end' : 'middle';
+        const color = index < impact.beforeWeeks.length ? '#f44336' : '#4385f5';
+        return `<g fill="${color}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2"></circle><text class="report-impact-value-label" x="${x.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="${anchor}">${formatReportCount(week.ttk)}</text></g>`;
+    }).join('');
+    const dividerX = xFor(impact.beforeWeeks.length - 0.5);
+    const dividerLabel = `<text class="report-impact-divider-label" x="${dividerX.toFixed(1)}" y="${top - 8}" text-anchor="middle">Mulai Ads</text>`;
+
+    return `<div class="report-impact-chart-wrap">
+        <svg class="report-impact-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Grafik TTK mingguan sebelum dan setelah pemasangan ads">
+            ${dividerLabel}
+            ${grid}
+            <line class="report-impact-axis" x1="${left}" y1="${top + plotHeight}" x2="${width - right}" y2="${top + plotHeight}"></line>
+            <line class="report-impact-divider" x1="${dividerX.toFixed(1)}" y1="${top}" x2="${dividerX.toFixed(1)}" y2="${top + plotHeight}"></line>
+            <path class="report-impact-line report-impact-line-before" d="${makePath(impact.beforeWeeks, 0)}"></path>
+            <path class="report-impact-line report-impact-line-after" d="${makePath(impact.afterWeeks, impact.beforeWeeks.length)}"></path>
+            ${points}
+            ${labels}
+        </svg>
+        <div class="report-impact-legend"><span><i class="report-impact-legend-before"></i>Sebelum</span><span><i class="report-impact-legend-after"></i>Setelah</span></div>
+    </div>`;
+}
+
+function buildImpactInsights(impact) {
+    const improved = impact.locations
+        .filter(item => item.ttkChange !== null && item.ttkChange > 0)
+        .sort((a, b) => b.ttkChange - a.ttkChange);
+    const declined = impact.locations
+        .filter(item => item.ttkChange !== null && item.ttkChange < 0)
+        .sort((a, b) => a.ttkChange - b.ttkChange);
+    const volumeLeader = impact.locations
+        .map(item => ({ ...item, ttkDelta: item.afterTTK - item.beforeTTK }))
+        .sort((a, b) => b.ttkDelta - a.ttkDelta)[0];
+    const weightChanges = impact.locations
+        .filter(item => item.beforeTTK > 0 && item.afterTTK > 0)
+        .map(item => {
+            const beforeAverage = item.beforeKG / item.beforeTTK;
+            const afterAverage = item.afterKG / item.afterTTK;
+            return {
+                ...item,
+                beforeAverage,
+                afterAverage,
+                change: percentChange(afterAverage, beforeAverage),
+            };
+        })
+        .filter(item => item.change !== null)
+        .sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+    const ttkVerb = impact.ttkChange == null ? 'belum dapat dibandingkan' :
+        `${impact.ttkChange >= 0 ? 'naik' : 'turun'} ${formatReportPercentValue(Math.abs(impact.ttkChange))}%`;
+    const kgVerb = impact.kgChange == null ? 'belum dapat dibandingkan' :
+        `${impact.kgChange >= 0 ? 'meningkat' : 'menurun'} ${formatReportPercentValue(Math.abs(impact.kgChange))}%`;
+    const improvedNames = improved.slice(0, 3).map(item => escapeReportHtml(item.location)).join(', ');
+    const declinedNames = declined.slice(0, 4).map(item => escapeReportHtml(item.location)).join(', ');
+    const summary = [
+        `<strong>Mayoritas lokasi ${impact.improvedLocations > impact.locations.length / 2 ? 'tumbuh' : 'belum tumbuh'}.</strong> ${impact.improvedLocations} dari ${impact.locations.length} lokasi mencatat kenaikan TTK setelah pemasangan ads.`,
+        `<strong>TTK dan KG ${impact.ttkChange > 0 && impact.kgChange > 0 ? 'meningkat' : 'berubah'}.</strong> Total TTK ${ttkVerb}, sementara KG ${kgVerb}.`,
+        volumeLeader && volumeLeader.ttkDelta > 0
+            ? `<strong>${escapeReportHtml(volumeLeader.location)} unggul secara volume.</strong> TTK bertambah ${formatReportCount(volumeLeader.ttkDelta)}, dari ${formatReportCount(volumeLeader.beforeTTK)} menjadi ${formatReportCount(volumeLeader.afterTTK)}.`
+            : '<strong>Belum ada lokasi dengan kenaikan volume TTK.</strong> Tinjau kembali hasil per lokasi dan periode pengukuran.',
+    ];
+    const recommendations = [
+        improved.length
+            ? `<strong>Optimalkan lokasi unggulan.</strong> Pertahankan performa ${improvedNames}.`
+            : '<strong>Evaluasi strategi ads.</strong> Belum ada lokasi yang menunjukkan kenaikan TTK dibanding periode sebelum ads.',
+        declined.length
+            ? `<strong>Evaluasi lokasi menurun.</strong> Tinjau strategi ads di ${declinedNames}.`
+            : '<strong>Pantau konsistensi.</strong> Tidak ada lokasi dengan penurunan TTK pada periode pembanding.',
+        weightChanges.length
+            ? (() => {
+                const item = weightChanges[0];
+                const direction = item.change > 0 ? 'naik' : item.change < 0 ? 'turun' : 'tidak berubah';
+                return `<strong>Tinjau berat rata-rata per resi.</strong> Di ${escapeReportHtml(item.location)}, nilainya ${direction} ${formatReportPercentValue(Math.abs(item.change))}% (${formatReportNumber(item.beforeAverage)} menjadi ${formatReportNumber(item.afterAverage)} KG per TTK).`;
+            })()
+            : '<strong>Lengkapi data pembanding.</strong> Pastikan TTK sebelum dan sesudah ads tersedia agar perubahan berat rata-rata per resi bisa dinilai.',
+    ];
+
+    return { summary, recommendations };
+}
+
+function formatImpactChange(value) {
+    return value == null ? '—' : `${value > 0 ? '+' : ''}${formatReportPercentValue(value)}%`;
+}
+
 function renderReport(type, title, period, metrics, previousMetrics) {
     const monthly = type === 'monthly';
     const dimensionLabel = type === 'campaign' ? 'Konten (interval 2 minggu)' : 'Kota Asal';
@@ -196,6 +546,17 @@ function renderReport(type, title, period, metrics, previousMetrics) {
         title;
     const summary = buildReportSummary(type, metrics, previousMetrics);
     const actions = buildReportActions(type, metrics, previousMetrics);
+    const monthlySpendDelta = monthly ? getMonthlyDelta(metrics.totalSpend, previousMetrics?.totalSpend, 'spend') : null;
+    const monthlyTTKDelta = monthly ? getMonthlyDelta(metrics.totalTTK, previousMetrics?.totalTTK, 'volume') : null;
+    const monthlyCostPerTTKDelta = monthly ? getMonthlyDelta(metrics.avgCostPerTTK, previousMetrics?.avgCostPerTTK, 'spend') : null;
+    const monthlyKGDelta = monthly ? getMonthlyDelta(metrics.totalKG, previousMetrics?.totalKG, 'volume') : null;
+    const averageKGPerTTK = metrics.totalTTK > 0 ? metrics.totalKG / metrics.totalTTK : null;
+    const previousAverageKGPerTTK = previousMetrics?.totalTTK > 0
+        ? previousMetrics.totalKG / previousMetrics.totalTTK
+        : null;
+    const monthlyAverageKGPerTTKDelta = monthly
+        ? getMonthlyDelta(averageKGPerTTK, previousAverageKGPerTTK, 'volume')
+        : null;
     const benchmarkLabel = metrics.avgCostPerTTK == null ? 'Belum ada TTK untuk menghitung rata-rata' :
         `${type === 'campaign' ? 'Setiap konten mewakili 14 hari berurutan dari awal rentang terpilih. ' : 'Skala logaritmik agar semua bar terbaca. '}Garis putus = rata-rata (${formatReportCurrency(metrics.avgCostPerTTK)}). Hijau: di bawah rata-rata · Kuning: sampai 2× · Merah: lebih dari 2×`;
 
@@ -214,17 +575,20 @@ function renderReport(type, title, period, metrics, previousMetrics) {
                 <p>${escapeReportHtml(summary.description)}</p>
             </div>
         </section>
-        <div class="report-kpis">
-            ${renderReportKpi('Total Pengeluaran', formatReportCurrency(metrics.totalSpend), monthly ? monthlyDelta(metrics.totalSpend, previousMetrics?.totalSpend, 'spend') : `${formatReportCurrency(metrics.totalSpend / Math.max(1, metrics.weeks))} rata-rata per minggu`)}
-            ${renderReportKpi('Total TTK', formatReportNumber(metrics.totalTTK), monthly ? monthlyDelta(metrics.totalTTK, previousMetrics?.totalTTK, 'volume') : `${formatReportNumber(metrics.totalTTK / Math.max(1, metrics.weeks))} rata-rata per minggu`)}
-            ${renderReportKpi('Biaya per TTK', formatReportCurrency(metrics.avgCostPerTTK), monthly ? monthlyDelta(metrics.avgCostPerTTK, previousMetrics?.avgCostPerTTK, 'spend') : 'Semakin rendah semakin efisien')}
-            ${renderReportKpi('Total KG', formatReportNumber(metrics.totalKG), monthly ? monthlyDelta(metrics.totalKG, previousMetrics?.totalKG, 'volume') : `Biaya per KG ${formatReportCurrency(metrics.totalKG ? metrics.totalSpend / metrics.totalKG : null)}`)}
+        <div class="report-kpis${monthly ? ' report-kpis-monthly' : ''}">
+            ${renderReportKpi('Total Pengeluaran', formatReportCurrency(metrics.totalSpend), monthly ? monthlySpendDelta.text : `${formatReportCurrency(metrics.totalSpend / Math.max(1, metrics.weeks))} rata-rata per minggu`, monthlySpendDelta?.tone)}
+            ${renderReportKpi('Total TTK', formatReportNumber(metrics.totalTTK), monthly ? monthlyTTKDelta.text : `Biaya per TTK ${formatReportCurrency(metrics.avgCostPerTTK)}`, monthlyTTKDelta?.tone)}
+            ${monthly ? renderReportKpi('Biaya per TTK', formatReportCurrency(metrics.avgCostPerTTK), monthlyCostPerTTKDelta.text, monthlyCostPerTTKDelta.tone) : ''}
+            ${renderReportKpi('Total KG', formatReportNumber(metrics.totalKG), monthly ? monthlyKGDelta.text : `Biaya per KG ${formatReportCurrency(metrics.totalKG ? metrics.totalSpend / metrics.totalKG : null)}`, monthlyKGDelta?.tone)}
+            ${renderReportKpi('Rata-rata KG per TTK', formatReportNumber(averageKGPerTTK), monthly
+                ? monthlyAverageKGPerTTKDelta.text
+                : 'Total KG ÷ Total TTK', monthlyAverageKGPerTTKDelta?.tone)}
         </div>
         <div class="report-metrics-strip">
             ${renderReportMetric(formatReportCount(metrics.totalViews), 'Views')}
-            ${renderReportMetric(metrics.ctr == null ? '—' : formatReportPercent(metrics.ctr), 'CTR (Daya Tarik)')}
+            ${renderReportMetric(metrics.ctr == null ? '—' : formatReportPercent(metrics.ctr), 'CTR (Daya Tarik)', true)}
             ${renderReportMetric(formatReportCount(metrics.totalClicks), 'Link Clicks')}
-            ${renderReportMetric(metrics.cvr == null ? '—' : formatReportPercent(metrics.cvr), 'CVR (Closing)')}
+            ${renderReportMetric(metrics.cvr == null ? '—' : formatReportPercent(metrics.cvr), 'CVR (Closing)', true)}
             ${renderReportMetric(formatReportCount(metrics.totalViewers), 'Viewers')}
         </div>
         <section class="report-chart">
@@ -285,16 +649,16 @@ function renderEngagementTable(metrics) {
     </section>`;
 }
 
-function renderReportKpi(label, value, note) {
+function renderReportKpi(label, value, note, noteTone = '') {
     return `<div class="report-kpi">
         <div class="report-kpi-label">${escapeReportHtml(label)}</div>
         <div class="report-kpi-value">${escapeReportHtml(value)}</div>
-        <div class="report-kpi-note">${escapeReportHtml(note)}</div>
+        ${note ? `<div class="report-kpi-note${noteTone ? ` report-kpi-note-${noteTone}` : ''}">${escapeReportHtml(note)}</div>` : ''}
     </div>`;
 }
 
-function renderReportMetric(value, label) {
-    return `<div><div class="report-metric-value">${escapeReportHtml(value)}</div><div class="report-metric-label">${escapeReportHtml(label)}</div></div>`;
+function renderReportMetric(value, label, highlighted = false) {
+    return `<div${highlighted ? ' class="report-metric-highlight"' : ''}><div class="report-metric-value">${escapeReportHtml(value)}</div><div class="report-metric-label">${escapeReportHtml(label)}</div></div>`;
 }
 
 function renderReportChart(metrics) {
@@ -387,12 +751,33 @@ function monthlyHeadline(current, previous) {
 }
 
 function monthlyDelta(current, previous, type) {
-    if (current == null || previous == null) return 'Data pembanding tidak tersedia';
+    return getMonthlyDelta(current, previous, type).text;
+}
+
+function getMonthlyDelta(current, previous, type) {
+    if (current == null || previous == null) {
+        return {
+            text: 'Data pembanding tidak tersedia',
+            tone: '',
+        };
+    }
     const change = percentChange(current, previous);
-    if (change == null) return 'Tidak dapat dibandingkan (nilai dasar 0)';
-    const better = type === 'volume' ? change >= 0 : change <= 0;
-    const arrow = change > 0 ? '▲' : change < 0 ? '▼' : '•';
-    return `${arrow} ${formatReportPercentValue(Math.abs(change))}% vs periode pembanding · ${better ? 'membaik' : 'memburuk'}`;
+    if (change == null) return {
+        text: 'Tidak dapat dibandingkan (nilai dasar 0)',
+        tone: '',
+    };
+    if (change === 0) {
+        return {
+            text: '• 0,00% vs pembanding',
+            tone: 'neutral',
+        };
+    }
+
+    const improved = type === 'volume' ? change > 0 : change < 0;
+    return {
+        text: `${improved ? '▲' : '▼'} ${formatReportPercentValue(Math.abs(change))}% vs pembanding`,
+        tone: improved ? 'positive' : 'negative',
+    };
 }
 
 function percentChange(current, previous) {

@@ -15,16 +15,33 @@ async function parseExcelFile(file) {
             try {
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
-                const sheet = workbook.Sheets[sheetName];
-                const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
-                const headerIdx = detectHeaderRow(rawRows);
-                const headers = rawRows[headerIdx].map(h => (h != null ? String(h).trim() : ''));
-                const dataRows = rawRows.slice(headerIdx + 1);
-                let rows = buildRows(headers, dataRows);
-                broadcastValues(rows);
-                rows = expandToDailyRows(rows);
-                resolve(rows);
+                const allRows = [];
+                const unmatchedSheets = [];
+
+                for (const sheetName of workbook.SheetNames) {
+                    const sheet = workbook.Sheets[sheetName];
+                    const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+                    const headerIdx = detectHeaderRow(rawRows);
+                    if (headerIdx === -1) {
+                        unmatchedSheets.push(sheetName);
+                        continue;
+                    }
+
+                    const headers = rawRows[headerIdx].map(h => (h != null ? String(h).trim() : ''));
+                    let rows = buildRows(headers, rawRows.slice(headerIdx + 1));
+                    broadcastValues(rows);
+                    allRows.push(...expandToDailyRows(rows));
+                }
+
+                if (!allRows.length) {
+                    const sheetList = workbook.SheetNames.join(', ');
+                    const reason = unmatchedSheets.length === workbook.SheetNames.length
+                        ? 'Header Location + Campaign Title/Campaign (atau Week + Total Budget) tidak ditemukan.'
+                        : 'Header ditemukan, tetapi tidak ada baris dengan format tanggal yang valid.';
+                    throw new Error(`${reason} Sheet yang diperiksa: ${sheetList || '(tidak ada)'}`);
+                }
+
+                resolve(allRows);
             } catch (err) {
                 reject(err);
             }
@@ -45,7 +62,7 @@ function detectHeaderRow(rows) {
         if (vals.includes('location') && (vals.includes('campaign') || vals.includes('campaign title'))) return i;
         if (vals.includes('week') && vals.includes('total budget')) return i;
     }
-    return 0;
+    return -1;
 }
 
 /**
