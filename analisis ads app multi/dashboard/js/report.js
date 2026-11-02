@@ -541,7 +541,7 @@ function formatImpactChange(value) {
 
 function renderReport(type, title, period, metrics, previousMetrics) {
     const monthly = type === 'monthly';
-    const dimensionLabel = type === 'campaign' ? 'Konten (interval 2 minggu)' : 'Kota Asal';
+    const dimensionLabel = type === 'campaign' ? 'Konten (interval 2 minggu)' : 'Kota';
     const heading = monthly ? title.replace('Report Bulanan — ', '') :
         title;
     const summary = buildReportSummary(type, metrics, previousMetrics);
