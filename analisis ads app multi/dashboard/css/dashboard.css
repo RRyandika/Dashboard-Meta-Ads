@@ -449,9 +449,9 @@ body {
 .report-chart-header,
 .report-row {
     display: grid;
-    grid-template-columns: minmax(105px, 1.15fr) minmax(110px, 1.8fr) minmax(90px, 0.8fr) minmax(105px, 1fr);
+    grid-template-columns: minmax(0, 15ch) minmax(95px, max-content) minmax(110px, 2fr) minmax(70px, 0.7fr) minmax(65px, 0.65fr);
     align-items: center;
-    gap: 8px;
+    column-gap: 6px;
 }
 
 .report-chart-header {
@@ -459,6 +459,14 @@ body {
     color: #647995;
     font-size: 9px;
     font-weight: 700;
+}
+
+.report-chart-header > :nth-child(2) {
+    text-align: right;
+}
+
+.report-chart-header > :nth-child(n+4) {
+    text-align: right;
 }
 
 .report-row {
@@ -508,12 +516,15 @@ body {
 .report-row-cost {
     text-align: right;
     font-weight: 700;
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
 
 .report-row-share {
     color: #536780;
     font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
     white-space: nowrap;
 }
 
@@ -883,9 +894,9 @@ body {
     .report-heading h1 { font-size: 23px; }
     .report-kpi-value { font-size: 15px; }
     .report-chart-header, .report-row {
-        grid-template-columns: minmax(75px, 1fr) minmax(60px, 1.2fr) minmax(65px, 0.8fr);
+        grid-template-columns: minmax(75px, 15ch) minmax(65px, 0.8fr) minmax(60px, 1.2fr);
     }
-    .report-chart-header > :last-child, .report-row > :last-child { display: none; }
+    .report-chart-header > :nth-child(n+4), .report-row > :nth-child(n+4) { display: none; }
     .report-engagement-table { min-width: 560px; }
     .report-bottom { grid-template-columns: 1fr; gap: 8px; }
 }

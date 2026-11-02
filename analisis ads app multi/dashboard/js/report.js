@@ -684,13 +684,14 @@ function renderReportChart(metrics) {
         const averagePosition = avg > 0 ? logPosition(avg) : null;
         return `<div class="report-row">
             <div class="report-row-label" title="${escapeReportHtml(item.label)}">${escapeReportHtml(item.label)}${item.dateLabel ? `<span class="report-row-date">${escapeReportHtml(item.dateLabel)}</span>` : ''}</div>
-            <div class="report-bar-track${averagePosition == null ? ' no-average' : ''}"${averagePosition == null ? '' : ` style="--average-position:${averagePosition.toFixed(1)}%"`}><div class="report-bar" style="width:${width.toFixed(1)}%;background:${color}"></div></div>
             <div class="report-row-cost">${cost == null ? '—' : escapeReportHtml(formatReportCurrency(cost))}</div>
-            <div class="report-row-share">${formatReportPercent(item.spend / maxSpend * 100)} biaya → ${formatReportPercent(item.ttk / maxTTK * 100)} TTK</div>
+            <div class="report-bar-track${averagePosition == null ? ' no-average' : ''}"${averagePosition == null ? '' : ` style="--average-position:${averagePosition.toFixed(1)}%"`}><div class="report-bar" style="width:${width.toFixed(1)}%;background:${color}"></div></div>
+            <div class="report-row-share">${formatReportPercent(item.spend / maxSpend * 100)}</div>
+            <div class="report-row-share">${formatReportPercent(item.ttk / maxTTK * 100)}</div>
         </div>`;
     }).join('');
 
-    return `<div class="report-chart-header"><div>${escapeReportHtml(items.length ? 'Nama' : '')}</div><div>Biaya per TTK</div><div></div><div>Porsi Biaya → TTK</div></div>${rows}`;
+    return `<div class="report-chart-header"><div>${escapeReportHtml(items.length ? 'Nama' : '')}</div><div>Biaya per TTK</div><div></div><div>Porsi Biaya</div><div>Porsi TTK</div></div>${rows}`;
 }
 
 function buildReportSummary(type, metrics, previous) {
