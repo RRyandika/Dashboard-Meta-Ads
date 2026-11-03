@@ -20,7 +20,7 @@ function setupReportGenerator() {
 function updateReportTitleControl() {
     const titleInput = document.getElementById('report-custom-title');
     const type = document.getElementById('report-type')?.value;
-    if (titleInput) titleInput.hidden = type === 'monthly' || type === 'impact';
+    if (titleInput) titleInput.hidden = type === 'monthly';
 }
 
 function generateReport() {
@@ -32,12 +32,12 @@ function generateReport() {
     const type = document.getElementById('report-type')?.value || 'location';
     const titleInput = document.getElementById('report-custom-title');
     const customTitle = titleInput?.value.trim() || '';
-    if (type !== 'monthly' && type !== 'impact' && !customTitle) {
+    if (type !== 'monthly' && !customTitle) {
         alert('Masukkan judul report terlebih dahulu.');
         titleInput?.focus();
         return;
     }
-    if (titleInput) titleInput.hidden = type === 'monthly' || type === 'impact';
+    if (titleInput) titleInput.hidden = type === 'monthly';
 
     const selected = APP.filterState.selected;
     if (type === 'impact') {
@@ -48,7 +48,7 @@ function generateReport() {
             return;
         }
 
-        const reportTitle = 'Analisis Dampak Ads';
+        const reportTitle = customTitle;
         const report = document.getElementById('report-page');
         report.innerHTML = renderAdsImpactReport(reportTitle, impact);
         document.getElementById('view-upload').style.display = 'none';
@@ -348,7 +348,7 @@ function renderAdsImpactReport(title, impact) {
     return `
         <div class="report-heading">
             <div>
-                <div class="report-eyebrow">Campaign Report</div>
+                <div class="report-eyebrow">Analisis Dampak Ads</div>
                 <h1>${escapeReportHtml(title)}</h1>
             </div>
             <div class="report-meta">Complete · hasil ${formatReportDate(periodStart)} – ${formatReportDate(periodEnd)}<br>Data ${impact.comparisonWeeks * 2} minggu</div>
@@ -563,7 +563,7 @@ function renderReport(type, title, period, metrics, previousMetrics) {
     return `
         <div class="report-heading">
             <div>
-                <div class="report-eyebrow">${monthly ? 'Monthly Report' : type === 'campaign' ? 'Ads Report' : 'Campaign Report'}</div>
+                <div class="report-eyebrow">${monthly ? 'Periodic Report' : type === 'campaign' ? 'Ads Report' : 'Campaign Report'}</div>
                 <h1>${escapeReportHtml(heading)}</h1>
             </div>
             <div class="report-meta">${escapeReportHtml(period)}<br>Data ${formatReportNumber(metrics.items.length)} ${type === 'campaign' ? 'periode konten' : 'lokasi'}</div>
